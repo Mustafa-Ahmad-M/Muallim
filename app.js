@@ -183,19 +183,31 @@ function resFlat(){ const o=[]; RES_CATS.forEach(c=>c.items.forEach(it=>o.push(O
 const STATE_KEY="muallim_state_v1", SET_KEY="muallim_settings_v1";
 function loadState(){ try{ const r=localStorage.getItem(STATE_KEY); return r?JSON.parse(r):null; }catch(e){ return null; } }
 function saveState(s){ try{ localStorage.setItem(STATE_KEY, JSON.stringify(s)); }catch(e){} }
-/* ⚠️ إصلاح أمني: لا يوجد أي مفتاح ذكاء اصطناعي مدمج في الكود إطلاقًا.
-   كل مستخدم يضيف مفتاح Gemini المجاني الخاص به من شاشة الإعدادات على جهازه فقط. */
+/* ⚠️ لا يوجد أي مفتاح ذكاء اصطناعي مدمج في الكود إطلاقًا.
+   كل مستخدم يضيف مفتاح الذكاء الاصطناعي الخاص به من شاشة الإعدادات على جهازه فقط. */
 const GEM_KEY="";
-/* المفتاح القديم الذي تسرّب — نمسحه تلقائيًا من متصفح أي مستخدم كان مخزّنًا عنده،
-   حتى لا يستمر التطبيق في استخدام مفتاح ميّت/مكشوف، ويُطلب منه إدخال مفتاحه الجديد. */
-const LEAKED_GEM_KEY="";
-/* رابط ومفتاح Supabase «العام» (anon) — نشره آمن لأنه مصمَّم ليكون داخل المتصفح،
-   والحماية الحقيقية صارت في RLS + الدوال الآمنة (راجع supabase.sql). */
-const SB_URL="https://ibjwiuirqgopmwfcucaf.supabase.co";
-const SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImliandpdWlycWdvcG13ZmN1Y2FmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzOTYwNzgsImV4cCI6MjA5Njk3MjA3OH0.IiSgCtByKixdn8n5qpNWjCOuxLcFEbzoH-iNevua-v8";
-const DEFAULT_SETTINGS={ provider:"gemini", models:{claude:"claude-haiku-4-5-20251001",openai:"gpt-4o-mini",gemini:"gemini-2.5-flash"}, keys:{claude:"",openai:"",gemini:GEM_KEY}, supabaseUrl:SB_URL, supabaseKey:SB_KEY, syncCode:"" };
-/* رمز مزامنة سرّي وعشوائي لكل مستخدم — يحلّ محلّ الصف المشترك "main"،
-   فيمنع تصادم بيانات المستخدمين وتسريبها، ويسمح بالمزامنة بين الأجهزة بنسخه. */
+/* قاعدة بيانات «مُعلّمي» على Supabase — مدمجة في التطبيق ولا يحتاج المستخدم لإعدادها.
+   الرابط والمفتاح «العام» (publishable/anon) آمنان للنشر داخل المتصفح: الجدول مقفول
+   بالكامل عبر RLS، ولا يمرّ الوصول إلا عبر دالتين آمنتين تتطلّبان «مفتاح الحساب» السرّي. */
+const SB_URL="https://fqnsjgkquezrtnkmrxhj.supabase.co";
+const SB_KEY="sb_publishable_ULGxbDMRM6YRQErAUtkLUw_R7fZofv2";
+const DEFAULT_SETTINGS={ provider:"gemini", models:{claude:"claude-haiku-4-5-20251001",openai:"gpt-4o-mini",gemini:"gemini-2.5-flash"}, keys:{claude:"",openai:"",gemini:GEM_KEY}, syncCode:"" };
+
+/* تجزئة ثابتة (cyrb53) — لاشتقاق «مفتاح حساب» ثابت من اسم المعلّم + كلمة المرور.
+   نفس البيانات تُنتج نفس المفتاح دائمًا، فتُسترجع بيانات المعلّم على أي جهاز
+   وبعد أي مسح للذاكرة، ولا تختلط بيانات المعلّمين ببعضها أبدًا. */
+function cyrb53(str, seed=0){
+  let h1=0xdeadbeef^seed, h2=0x41c6ce57^seed;
+  for(let i=0,ch;i<str.length;i++){ ch=str.charCodeAt(i); h1=Math.imul(h1^ch,2654435761); h2=Math.imul(h2^ch,1597334677); }
+  h1=Math.imul(h1^(h1>>>16),2246822507); h1^=Math.imul(h2^(h2>>>13),3266489909);
+  h2=Math.imul(h2^(h2>>>16),2246822507); h2^=Math.imul(h1^(h1>>>13),3266489909);
+  return (4294967296*(2097151&h2)+(h1>>>0)).toString(36);
+}
+const ACCT_SALT="muallim::v2::account";
+function accountCodeFrom(name,pass){
+  const id=String(name||"").trim().toLowerCase()+"::"+String(pass||"").trim();
+  return "u_"+cyrb53(ACCT_SALT+"::"+id,7)+cyrb53(id+"::"+ACCT_SALT,99);
+}
 function genCode(){ return (rid()+rid()+rid()+rid()+rid()+rid()).slice(0,40); }
 function ensureCode(o){ if(!o.syncCode){ o.syncCode=genCode(); try{ localStorage.setItem(SET_KEY, JSON.stringify(o)); }catch(e){} } return o; }
 function loadSettings(){
@@ -205,15 +217,12 @@ function loadSettings(){
     const out=Object.assign({},d,s);
     out.models=Object.assign({},d.models,s.models||{});
     out.keys={}; ["claude","openai","gemini"].forEach(k=>{ out.keys[k]=(s.keys&&s.keys[k])?s.keys[k]:d.keys[k]; });
-    if(out.keys.gemini===LEAKED_GEM_KEY) out.keys.gemini=""; // تنظيف المفتاح المسرّب القديم
-    out.supabaseUrl=s.supabaseUrl||d.supabaseUrl;
-    out.supabaseKey=s.supabaseKey||d.supabaseKey;
     out.syncCode=s.syncCode||"";
+    delete out.supabaseUrl; delete out.supabaseKey; // لم تعد قابلة للتعديل — مدمجة في التطبيق
     if(!out.provider) out.provider=d.provider;
     return ensureCode(out);
   }catch(e){ return ensureCode(d); }
 }
-function sbRef(url){ try{ const m=(url||"").match(/https?:\/\/([^.]+)\.supabase/); return m?m[1]:""; }catch(e){ return ""; } }
 function saveSettings(s){ try{ localStorage.setItem(SET_KEY, JSON.stringify(s)); }catch(e){} }
 
 const PROVIDERS={
@@ -236,69 +245,60 @@ function arabicErr(provider,msg){
     return "تجاوزت الحدّ المجاني أو الرصيد. انتظر قليلًا، أو جرّب Gemini المجاني، أو موديلًا أخفّ من الإعدادات.";
   return (msg||"حدث خطأ غير متوقع")+" — راجع المفتاح والموديل في الإعدادات.";
 }
+/* استخراج JSON متين: يزيل علامات Markdown ويلتقط أول كائن/مصفوفة صحيحة. */
+function parseJSONLoose(text){
+  if(!text) return null;
+  let cc=String(text).replace(/```json/gi,"").replace(/```/g,"").trim();
+  try{ return JSON.parse(cc); }catch(e){}
+  const tryRange=(open,close)=>{ const a=cc.indexOf(open); if(a<0) return null; let depth=0,inStr=false,esc=false;
+    for(let i=a;i<cc.length;i++){ const ch=cc[i];
+      if(inStr){ if(esc) esc=false; else if(ch==="\\") esc=true; else if(ch==="\"") inStr=false; continue; }
+      if(ch==="\"") inStr=true; else if(ch===open) depth++; else if(ch===close){ depth--; if(depth===0){ try{ return JSON.parse(cc.slice(a,i+1)); }catch(e){ return null; } } }
+    } return null; };
+  return tryRange("{","}")||tryRange("[","]");
+}
 async function callAI(prompt, system, wantJSON){
   const cfg=loadSettings(); const provider=cfg.provider||"gemini"; const key=(cfg.keys&&cfg.keys[provider])||"";
-  if(!key) throw new Error("أضف مفتاح "+PROVIDERS[provider].name+" المجاني في الإعدادات أولًا (حسابي ← إعدادات الذكاء الاصطناعي)");
-  const sys=system+(wantJSON?" أعِد الرد بصيغة JSON صحيحة فقط دون أي شرح أو علامات Markdown.":"");
+  if(!key) throw new Error("أضف مفتاح "+PROVIDERS[provider].name+" في الإعدادات أولًا (حسابي ← إعدادات الذكاء الاصطناعي)");
+  const sys=system+(wantJSON?" أعِد الرد ككائن JSON صحيح فقط، دون أي شرح أو نص خارج JSON ودون علامات Markdown.":"");
   let text="";
   try{
     if(provider==="claude"){
-      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"content-type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:cfg.models.claude,max_tokens:2000,system:sys,messages:[{role:"user",content:prompt}]})});
+      const body={model:cfg.models.claude,max_tokens:2200,system:sys,messages:[{role:"user",content:prompt}]};
+      if(wantJSON){ body.messages.push({role:"assistant",content:"{"}); } // إجبار البدء بـ JSON
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"content-type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify(body)});
       const d=await res.json(); if(d.error) throw new Error(d.error.message||"خطأ");
       text=(d.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n");
+      if(wantJSON&&text&&text.trim()[0]!=="{"&&text.trim()[0]!=="[") text="{"+text; // إعادة ما أُجبر عليه
     } else if(provider==="openai"){
-      const res=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"content-type":"application/json","authorization":"Bearer "+key},body:JSON.stringify({model:cfg.models.openai,messages:[{role:"system",content:sys},{role:"user",content:prompt}]})});
+      const body={model:cfg.models.openai,messages:[{role:"system",content:sys},{role:"user",content:prompt}]};
+      if(wantJSON) body.response_format={type:"json_object"};
+      const res=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"content-type":"application/json","authorization":"Bearer "+key},body:JSON.stringify(body)});
       const d=await res.json(); if(d.error) throw new Error((d.error&&d.error.message)||"خطأ");
       text=(d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content)||"";
     } else {
       const m=cfg.models.gemini;
-      const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+m+":generateContent?key="+encodeURIComponent(key),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({systemInstruction:{parts:[{text:sys}]},contents:[{role:"user",parts:[{text:prompt}]}],generationConfig:{temperature:0.8,maxOutputTokens:2048}})});
+      const gen={temperature:0.8,maxOutputTokens:2600};
+      if(wantJSON) gen.responseMimeType="application/json";
+      const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+m+":generateContent?key="+encodeURIComponent(key),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({systemInstruction:{parts:[{text:sys}]},contents:[{role:"user",parts:[{text:prompt}]}],generationConfig:gen})});
       const d=await res.json(); if(d.error) throw new Error((d.error&&d.error.message)||"خطأ");
       const cand=d.candidates&&d.candidates[0]; text=((cand&&cand.content&&cand.content.parts)||[]).map(p=>p.text||"").join("\n");
     }
   }catch(e){ throw new Error(arabicErr(provider, e.message)); }
   text=(text||"").trim();
   if(!text) throw new Error("لم يصل ردّ من المحرّك. جرّب مرة أخرى أو غيّر الموديل من الإعدادات.");
-  if(wantJSON){ let cc=text.replace(/```json/gi,"").replace(/```/g,"").trim(); const a=cc.indexOf("{"),b=cc.lastIndexOf("}"),a2=cc.indexOf("["),b2=cc.lastIndexOf("]"); try{ return JSON.parse(cc); }catch(e){ try{ if(a>=0&&b>a) return JSON.parse(cc.slice(a,b+1)); if(a2>=0&&b2>a2) return JSON.parse(cc.slice(a2,b2+1)); }catch(e2){} return null; } }
+  if(wantJSON){ const parsed=parseJSONLoose(text); if(parsed===null) throw new Error("تعذّر قراءة رد الذكاء الاصطناعي. جرّب مرة أخرى أو بدّل الموديل من الإعدادات."); return parsed; }
   return text;
 }
 
-/* ⚠️ إصلاح أمني: الجدول مقفول بالكامل عبر RLS، ولا يمرّ الوصول للبيانات إلا عبر
-   دالتين آمنتين تتطلّبان «رمز المزامنة» السرّي. هذا يمنع تصادم المستخدمين وتسريب بياناتهم. */
-const SB_SQL=[
-"-- مُعلّمي — تجهيز السحابة بشكل آمن (جدول مقفول + دالتان)",
-"-- شغّله مرة واحدة: supabase.com ← مشروعك ← SQL Editor ← الصق ← Run",
-"create table if not exists app_backups (",
-"  id text primary key,           -- رمز المزامنة السرّي لكل مستخدم (وليس 'main')",
-"  data jsonb,",
-"  updated_at timestamptz default now()",
-");",
-"alter table app_backups enable row level security;",
-"revoke all on table app_backups from anon, authenticated;",
-"create or replace function get_backup(p_code text)",
-"returns table(data jsonb, updated_at timestamptz)",
-"language sql security definer set search_path = public as $$",
-"  select data, updated_at from app_backups where id = p_code;",
-"$$;",
-"create or replace function put_backup(p_code text, p_data jsonb, p_iso timestamptz default now())",
-"returns void",
-"language plpgsql security definer set search_path = public as $$",
-"begin",
-"  insert into app_backups (id, data, updated_at)",
-"  values (p_code, p_data, p_iso)",
-"  on conflict (id) do update set data = excluded.data, updated_at = excluded.updated_at;",
-"end;",
-"$$;",
-"grant execute on function get_backup(text) to anon, authenticated;",
-"grant execute on function put_backup(text, jsonb, timestamptz) to anon, authenticated;"
-].join("\n");
-function getSB(cfg){ if(cfg.supabaseUrl&&cfg.supabaseKey&&window.supabase){ try{ return window.supabase.createClient(cfg.supabaseUrl,cfg.supabaseKey); }catch(e){ return null; } } return null; }
+/* عميل Supabase مدمج — يُنشأ مرة واحدة من ثوابت التطبيق، بلا أي إعداد من المستخدم. */
+let _sbClient=null;
+function getSB(){ if(_sbClient) return _sbClient; if(window.supabase&&SB_URL&&SB_KEY){ try{ _sbClient=window.supabase.createClient(SB_URL,SB_KEY); return _sbClient; }catch(e){ return null; } } return null; }
 function syncCodeOf(cfg){ return (cfg&&cfg.syncCode)||""; }
-async function backupCloud(state){ const cfg=loadSettings(); const sb=getSB(cfg); if(!sb) throw new Error("أضف رابط ومفتاح Supabase في الإعدادات أولًا"); const r=await sb.rpc("put_backup",{p_code:syncCodeOf(cfg),p_data:state,p_iso:new Date().toISOString()}); if(r.error) throw new Error(r.error.message); }
-async function restoreCloud(){ const cfg=loadSettings(); const sb=getSB(cfg); if(!sb) throw new Error("أضف رابط ومفتاح Supabase في الإعدادات أولًا"); const r=await sb.rpc("get_backup",{p_code:syncCodeOf(cfg)}); if(r.error) throw new Error(r.error.message); const row=r.data&&r.data[0]; if(!row||!row.data) throw new Error("لا توجد نسخة محفوظة بهذا الرمز بعد"); return row.data; }
-function cloudErrMissing(msg){ const m=(msg||"").toLowerCase(); return m.indexOf("does not exist")>=0||m.indexOf("could not find")>=0||m.indexOf("relation")>=0||m.indexOf("schema cache")>=0||m.indexOf("404")>=0||m.indexOf("not exist")>=0||m.indexOf("function")>=0; }
-async function cloudGet(){ const cfg=loadSettings(); const sb=getSB(cfg); if(!sb) return {ok:false}; try{ const r=await sb.rpc("get_backup",{p_code:syncCodeOf(cfg)}); if(r.error) return {ok:false,err:r.error.message,missing:cloudErrMissing(r.error.message)}; const row=r.data&&r.data[0]; return {ok:true,data:row&&row.data,updatedAt:row&&row.updated_at}; }catch(e){ return {ok:false,err:e.message}; } }
-async function cloudPut(state,iso){ const cfg=loadSettings(); const sb=getSB(cfg); if(!sb) return {ok:false}; try{ const r=await sb.rpc("put_backup",{p_code:syncCodeOf(cfg),p_data:state,p_iso:iso||new Date().toISOString()}); if(r.error) return {ok:false,err:r.error.message,missing:cloudErrMissing(r.error.message)}; return {ok:true}; }catch(e){ return {ok:false,err:e.message}; } }
+async function backupCloud(state){ const sb=getSB(); if(!sb) throw new Error("تعذّر الاتصال بالخدمة السحابية، تحقّق من الإنترنت"); const r=await sb.rpc("put_backup",{p_code:syncCodeOf(loadSettings()),p_data:state,p_iso:new Date().toISOString()}); if(r.error) throw new Error(r.error.message); }
+async function restoreCloud(){ const sb=getSB(); if(!sb) throw new Error("تعذّر الاتصال بالخدمة السحابية، تحقّق من الإنترنت"); const r=await sb.rpc("get_backup",{p_code:syncCodeOf(loadSettings())}); if(r.error) throw new Error(r.error.message); const row=r.data&&r.data[0]; if(!row||!row.data) throw new Error("لا توجد نسخة محفوظة بهذا الحساب بعد"); return row.data; }
+async function cloudGet(){ const sb=getSB(); if(!sb) return {ok:false}; try{ const r=await sb.rpc("get_backup",{p_code:syncCodeOf(loadSettings())}); if(r.error) return {ok:false,err:r.error.message}; const row=r.data&&r.data[0]; return {ok:true,data:row&&row.data,updatedAt:row&&row.updated_at}; }catch(e){ return {ok:false,err:e.message}; } }
+async function cloudPut(state,iso){ const sb=getSB(); if(!sb) return {ok:false}; try{ const r=await sb.rpc("put_backup",{p_code:syncCodeOf(loadSettings()),p_data:state,p_iso:iso||new Date().toISOString()}); if(r.error) return {ok:false,err:r.error.message}; return {ok:true}; }catch(e){ return {ok:false,err:e.message}; } }
 
 const todayISO=()=>new Date().toISOString();
 const fmtDate=(iso)=>new Date(iso).toLocaleDateString("ar-EG",{day:"numeric",month:"long"});
@@ -440,23 +440,22 @@ function FsEditor({ open, value, onChange, onClose, title }){
 
 function Login({ onLogin }){
   const [name,setName]=useState(""); const [pass,setPass]=useState("");
+  const go=()=>onLogin({name:name.trim()||"المعلّم",email:"teacher@local"},pass);
   return html`<div className="mq-login">
     <div className="mq-blob b1"/><div className="mq-blob b2"/><div className="mq-blob b3"/>
     <div className="mq-login-card">
       <div className="mq-logo"><${Icon} n="cap" s=${34} c="#fff"/><//>
       <h1 style=${{fontFamily:"Cairo",fontSize:27,margin:"16px 0 4px",color:C.ink}}>مُعلّمي<//>
       <p style=${{color:C.sub,margin:"0 0 22px",fontSize:14}}>مساعدك الذكي في تحضير وتنظيم حلقات الأطفال<//>
-      <button className="mq-google" onClick=${()=>onLogin({name:name||"المعلّم",email:"teacher@local"})}>
-        <${Icon} n="play" s=${18} c=${C.green}/>
-        دخول سريع — حساب محلي على هذا الجهاز
-      </button>
-      <div className="mq-or"><span>أو<//><//>
       <div style=${{display:"grid",gap:11}}>
         <${Field} value=${name} onChange=${setName} placeholder="اسم المعلّم" icon="user"/>
-        <${Field} value=${pass} onChange=${setPass} placeholder="كلمة مرور (محلية — اختياري)" type="password" icon="gear"/>
-        <${Btn} full=${true} icon="play" onClick=${()=>onLogin({name:name||"المعلّم",email:"teacher@local"})}>دخول وبدء العمل<//>
+        <${Field} value=${pass} onChange=${setPass} placeholder="كلمة المرور" type="password" icon="gear"/>
+        <${Btn} full=${true} icon="play" onClick=${go}>دخول وبدء العمل<//>
       <//>
-      <p style=${{fontSize:11,color:C.sub,marginTop:16}}>يُحفظ محتواك تلقائيًا على جهازك ويبقى معك في كل مرة<//>
+      <div style=${{background:"rgba(14,124,102,.07)",borderRadius:12,padding:"11px 13px",marginTop:16,textAlign:"right"}}>
+        <p style=${{fontSize:11.5,color:C.green,margin:0,lineHeight:1.7,fontWeight:600}}>🔒 بياناتك مربوطة بـ«اسمك + كلمة المرور». ادخل بنفس الاسم وكلمة المرور على أي جهاز لاسترجاع كل بياناتك تلقائيًا. لا تنسَ كلمة المرور.<//>
+      <//>
+      <p style=${{fontSize:11,color:C.sub,marginTop:14}}>يُحفظ محتواك تلقائيًا على جهازك وفي السحابة<//>
     <//>
   <//>`;
 }
@@ -742,7 +741,33 @@ function LessonScreen({ subject, lesson, onBack, update, notify, openLive }){
   const doSummary=async()=>{ if(!content.trim())return notify("اكتب محتوى الدرس أولًا"); setBusy("summary"); try{ const r=await callAI("لخّص هذا الدرس في 4-6 نقاط واضحة تصلح كمخطط للمعلّم:\n\n"+content,"أنت معلّم خبير في تبسيط الدروس للأطفال."); setSummary(r); persist({summary:r}); }catch(e){ notify(e.message); } setBusy(""); };
   const doDevelop=async()=>{ if(!content.trim())return notify("اكتب محتوى الدرس أولًا"); setBusy("dev"); try{ const r=await callAI('حلّل درس "'+lesson.title+'" لأطفال 6-13. المحتوى:\n'+content+'\n\nأعد JSON: {"activities":["نشاط"],"coloring":["تلوين"],"drawing":["رسم/تصوير"],"methods":["طريقة حديثة"],"questions":["سؤال"]} كل قائمة 3 عناصر.',"أنت خبير أحدث طرق تعليم الأطفال.",true); if(r){ setDev(r); persist({dev:r}); } else notify("تعذّر التطوير"); }catch(e){ notify(e.message); } setBusy(""); };
   const doTree=async()=>{ setBusy("tree"); try{ const r=await callAI('حوّل درس "'+lesson.title+'" إلى تشجير بصري هرمي (خريطة ذهنية). أعد JSON: {"title":"الفكرة المركزية","children":[{"title":"فرع","children":[{"title":"نقطة"}]}]} بحد أقصى 4 فروع وتحت كل فرع 2-4 نقاط. المحتوى:\n'+(content||lesson.title),"أنت خبير تنظيم المحتوى التعليمي بصريًا.",true); if(r&&r.title){ setTree(r); persist({tree:r}); notify("تم إنشاء التشجير ✓"); } else notify("تعذّر التشجير، حاول مرة أخرى"); }catch(e){ notify(e.message); } setBusy(""); };
-  const doSchedule=async()=>{ setBusy("sched"); try{ const body=(content&&content.trim().length>40)?content.slice(0,4000):(summary||lesson.title); const r=await callAI('أنت خبير إدارة حلقات الأطفال وفق أحدث طرق إدارة المحتوى التعليمي. اقرأ محتوى الدرس التالي وحوّله إلى «خريطة رحلة زمنية» للحلقة: قسّم المحتوى نفسه إلى مراحل صغيرة مترابطة مبنية على فقراته وأفكاره الفعلية، وأدرج الاستراحات والانتقالات الحركية في أماكنها المناسبة لتلائم تركيز أطفال 6-13 سنة. لكل مرحلة: عنوان مرتبط بجزء فعلي من المحتوى، الزمن بالدقائق، النوع، و«note» نصيحة عملية موجزة لكيفية تقديم هذه المرحلة. المدة الكلية 90-120 دقيقة وتشمل افتتاحًا ومراجعة وشرحًا مجزّأً وأنشطة واستراحة وتقويمًا وخاتمة.\n\nمحتوى الدرس:\n'+body+'\n\nأعد JSON فقط: {"segments":[{"title":"...","minutes":10,"type":"open|review|explain|activity|break|quiz|free","note":"نصيحة"}],"tips":["نصيحة عامة لإدارة الحلقة"]} مع 3-4 نصائح عامة في tips.',"أنت خبير تربوي في إدارة حلقات الأطفال وتقسيم المحتوى التعليمي.",true); const segs=(r&&r.segments&&r.segments.length)?r.segments:DEFAULT_SCHEDULE; const tips=(r&&Array.isArray(r.tips))?r.tips:[]; setSchedule(segs); setSchedTips(tips); persist({schedule:segs,scheduleTips:tips}); notify("تم تحليل الدرس وبناء خريطة الرحلة — يمكنك تعديلها ✓"); }catch(e){ if(!schedule){ setSchedule(DEFAULT_SCHEDULE); persist({schedule:DEFAULT_SCHEDULE}); } notify(e.message); } setBusy(""); };
+  const doSchedule=async()=>{
+    const body=(content&&content.trim())||"";
+    if(body.trim().length<60){ notify("اكتب محتوى المحاضرة أولًا (أو استخدم «تجهيز الدرس»)، فالجدول الزمني يُبنى من تحليل المحتوى نفسه"); return; }
+    setBusy("sched");
+    try{
+      const prompt='حلّل محتوى المحاضرة التالي تحليلًا دقيقًا، ثم قسّمه إلى «رحلة زمنية متسلسلة» لحلقة أطفال (6-13 سنة).\n'
+        +'قواعد إلزامية:\n'
+        +'1) رتّب المراحل بالتسلسل الزمني الفعلي من بداية الحلقة إلى نهايتها.\n'
+        +'2) أول مرحلة دائمًا من النوع "open" وعنوانها يبدأ بكلمة «ابدأ المحاضرة» (مثال: «ابدأ المحاضرة: ترحيب ودعاء وتمهيد»).\n'
+        +'3) المراحل الوسطى مبنية على فقرات المحتوى وأفكاره الفعلية بالترتيب الذي وردت به (شرح مجزّأ + أنشطة + استراحة في مكانها المناسب لتركيز الأطفال).\n'
+        +'4) آخر مرحلة دائمًا من النوع "free" أو "quiz" وعنوانها يتضمّن «ختام المحاضرة» (تلخيص + تكليف + دعاء ختام).\n'
+        +'5) لكل مرحلة: عنوان مرتبط بجزء فعلي من المحتوى، الزمن بالدقائق، النوع، و«note» نصيحة تنفيذية موجزة جدًا.\n'
+        +'6) المدة الكلية بين 90 و120 دقيقة، و7 إلى 10 مراحل.\n\n'
+        +'محتوى المحاضرة:\n'+body.slice(0,5000)+'\n\n'
+        +'أعد JSON فقط بهذا الشكل: {"segments":[{"title":"...","minutes":10,"type":"open|review|explain|activity|break|quiz|free","note":"نصيحة"}],"tips":["نصيحة عامة لإدارة الحلقة"]} مع 3-4 نصائح في tips.';
+      const r=await callAI(prompt,"أنت خبير تربوي في تحليل المحتوى التعليمي وبناء الجداول الزمنية المتسلسلة لحلقات الأطفال.",true);
+      let segs=(r&&Array.isArray(r.segments)&&r.segments.length)?r.segments.filter(s=>s&&s.title):[];
+      if(!segs.length) throw new Error("تعذّر بناء الجدول من المحتوى. جرّب مرة أخرى أو بدّل الموديل من الإعدادات.");
+      // ضمان أن أول مرحلة افتتاح يبدأ عنوانها بـ«ابدأ المحاضرة» وآخر مرحلة ختام
+      segs[0].type="open"; if(String(segs[0].title).indexOf("ابدأ المحاضرة")<0) segs[0].title="ابدأ المحاضرة: "+segs[0].title;
+      const li=segs.length-1; if(String(segs[li].title).indexOf("ختام")<0&&String(segs[li].title).indexOf("خاتمة")<0) segs[li].title="ختام المحاضرة: "+segs[li].title;
+      const tips=(r&&Array.isArray(r.tips))?r.tips:[];
+      setSchedule(segs); setSchedTips(tips); persist({schedule:segs,scheduleTips:tips});
+      notify("تم تحليل المحاضرة وبناء الجدول الزمني المتسلسل — يمكنك تعديله ✓");
+    }catch(e){ notify(e.message); }
+    setBusy("");
+  };
   const doChecklist=async()=>{ setBusy("chk"); try{ const r=await callAI('استخرج قائمة تحقق من 5-8 بنود لما يجب إنجازه أثناء شرح درس "'+lesson.title+'" للأطفال. أعد مصفوفة نصوص JSON قصيرة.',"أنت معلّم منظّم.",true); if(Array.isArray(r)){ const cl=r.map(t=>({id:rid(),text:t,done:false})); setChecklist(cl); persist({checklist:cl}); notify("تم إنشاء قائمة التحقق ✓"); } else notify("تعذّر الإنشاء"); }catch(e){ notify(e.message); } setBusy(""); };
   const doExams=async()=>{ setBusy("exam"); try{ const r=await callAI('أنشئ خطة أسبوعية من الأسئلة والتمارين تخدم درس "'+lesson.title+'" للأطفال 6-13، بافتراض أن يوم المحاضرة هو الجمعة. الجمعة=أسئلة تفاعلية أثناء الحلقة، وباقي الأيام مراجعة/واجب بسيط ومرح. أعد JSON: {"week":[{"day":"الجمعة","focus":"...","items":["سؤال/نشاط"]}]} سبعة أيام.',"أنت خبير تقويم تربوي للأطفال.",true); if(r&&r.week){ setExams(r); persist({exams:r}); notify("تم إنشاء الأسئلة الأسبوعية ✓"); } else notify("تعذّر الإنشاء"); }catch(e){ notify(e.message); } setBusy(""); };
   const doImport=()=>{ if(!imp.trim())return; const nc=(content?content+"\n":"")+imp.trim(); setContent(nc); persist({content:nc}); setImp(""); setImportOpen(false); notify("تم استيراد المحتوى ✓"); };
@@ -754,7 +779,7 @@ function LessonScreen({ subject, lesson, onBack, update, notify, openLive }){
   const addChk=()=>{ if(!newChk.trim())return; const cl=[...checklist,{id:rid(),text:newChk.trim(),done:false}]; setChecklist(cl); persist({checklist:cl}); setNewChk(""); };
   const delChk=(id)=>{ const cl=checklist.filter(c=>c.id!==id); setChecklist(cl); persist({checklist:cl}); };
   const setSchedAndSave=(s)=>{ setSchedule(s); persist({schedule:s}); };
-  const startLive=()=>{ const segs=schedule||DEFAULT_SCHEDULE; if(!schedule){ setSchedule(segs); persist({schedule:segs}); } openLive(); };
+  const startLive=()=>{ if(!schedule||!schedule.length){ notify("ابنِ الجدول الزمني أولًا من زر «جدول زمني بتحليل الدرس» ليبدأ بـ«ابدأ المحاضرة» ويتسلسل للنهاية"); return; } openLive(); };
   const setContentSave=(v)=>{ setContent(v); };
 
   return html`<div className="mq-screen">
@@ -873,8 +898,8 @@ function LessonScreen({ subject, lesson, onBack, update, notify, openLive }){
       <//>
     <//>`}
 
-    <${Modal} open=${importOpen} onClose=${()=>setImportOpen(false)} title="استيراد محتوى الدرس">
-      <p style=${{fontSize:13,color:C.sub,lineHeight:1.7,marginTop:0}}>الصق رابطًا أو نصًا من أي مصدر (Notion، GitHub، واتساب).<//>
+    <${Modal} open=${importOpen} onClose=${()=>setImportOpen(false)} title="لصق محتوى الدرس">
+      <p style=${{fontSize:13,color:C.sub,lineHeight:1.7,marginTop:0}}>انسخ النص من أي مصدر (واتساب، ملف، صفحة) والصقه هنا ليُضاف إلى محتوى الدرس.<//>
       <div style=${{display:"grid",gap:10}}><${Field} area=${true} rows=${4} value=${imp} onChange=${setImp} placeholder="الصق هنا…"/><${Btn} full=${true} icon="send" onClick=${doImport}>استيراد<//><//>
     <//>
     <${FsEditor} open=${fsOpen} value=${content} onChange=${setContentSave} onClose=${()=>{persist({content});setFsOpen(false);}} title=${lesson.title}/>
@@ -1148,8 +1173,6 @@ function SettingsScreen({ settings, setSettings, state, applyState, notify, clou
   const up=(patch)=>setSettings(Object.assign({},settings,patch));
   const setKey=(v)=>up({keys:Object.assign({},settings.keys,{[p]:v})});
   const setModel=(v)=>up({models:Object.assign({},settings.models,{[p]:v})});
-  const copySQL=()=>{ try{ navigator.clipboard.writeText(SB_SQL); notify("تم نسخ كود SQL ✓"); }catch(e){ notify("انسخ الكود يدويًا"); } };
-  const copyCode=()=>{ try{ navigator.clipboard.writeText(settings.syncCode||""); notify("تم نسخ رمز المزامنة ✓"); }catch(e){ notify("انسخ الرمز يدويًا"); } };
   const doBackup=async()=>{ setSbBusy("up"); try{ await backupCloud(state); notify("تم رفع نسخة احتياطية ✓"); }catch(e){ notify(e.message); } setSbBusy(""); };
   const doRestore=async()=>{ setSbBusy("down"); try{ const d=await restoreCloud(); if(d){ applyState(d); notify("تم الاسترجاع من السحابة ✓"); } }catch(e){ notify(e.message); } setSbBusy(""); };
   const customModel=!MODELS[p].find(m=>m.id===settings.models[p]);
@@ -1157,7 +1180,7 @@ function SettingsScreen({ settings, setSettings, state, applyState, notify, clou
     <${Header} title="الإعدادات" onBack=${onBack}/>
     <div className="mq-card" style=${{marginBottom:16}}>
       <div style=${{display:"flex",alignItems:"center",gap:8,marginBottom:12}}><${Icon} n="bot" s=${18} c=${C.green}/><h3 style=${{fontFamily:"Cairo",margin:0,fontSize:16,color:C.ink}}>محرّك الذكاء الاصطناعي<//><//>
-      <div style=${{background:"rgba(14,124,102,.07)",borderRadius:12,padding:"10px 12px",marginBottom:12,fontSize:12.5,color:C.green,lineHeight:1.7,fontWeight:600}}>💡 Gemini مجاني فعلًا — أنشئ مفتاحًا من جوجل بدون بطاقة، والصقه هنا، وكل الأدوات تشتغل. ChatGPT وClaude مدفوعان.<//>
+      <div style=${{background:"rgba(14,124,102,.07)",borderRadius:12,padding:"10px 12px",marginBottom:12,fontSize:12.5,color:C.green,lineHeight:1.7,fontWeight:600}}>💡 المفتاح الذي تضعه هنا يُشغّل كل أدوات الذكاء الاصطناعي (التلخيص، الخريطة الذهنية، الجدول الزمني، الأنشطة…). Gemini مجاني فعلًا من جوجل بدون بطاقة.<//>
       <div style=${{display:"grid",gap:9,marginBottom:14}}>
         ${Object.keys(PROVIDERS).map(k=>{const pr=PROVIDERS[k];const on=p===k;const has=!!(settings.keys&&settings.keys[k]);return html`<button key=${k} className=${"mq-prov"+(on?" on":"")} onClick=${()=>up({provider:k})}>
           <div className="mq-radio"/>
@@ -1177,33 +1200,17 @@ function SettingsScreen({ settings, setSettings, state, applyState, notify, clou
       <//>
     <//>
     <div className="mq-card" style=${{marginBottom:16}}>
-      <div style=${{display:"flex",alignItems:"center",gap:8,marginBottom:6}}><${Icon} n="cloud" s=${18} c=${C.blue}/><h3 style=${{fontFamily:"Cairo",margin:0,fontSize:16,color:C.ink}}>المزامنة السحابية<//>${cloudState==="ok"&&html`<span style=${{fontSize:10,fontWeight:800,color:C.green,background:"rgba(14,124,102,.1)",padding:"3px 8px",borderRadius:10}}>متزامن ✓<//>`}${cloudState==="sync"&&html`<span style=${{fontSize:10,fontWeight:800,color:C.blue,background:"rgba(46,134,193,.1)",padding:"3px 8px",borderRadius:10}}>جارٍ المزامنة…<//>`}<//>
-      <p style=${{fontSize:12.5,color:C.sub,lineHeight:1.7,margin:"0 0 12px"}}>بياناتك تُحفظ على جهازك وتُرفع للسحابة تلقائيًا، وتُسترجع عبر «رمز المزامنة» السرّي على أي جهاز.<//>
-      <div style=${{background:"rgba(46,134,193,.06)",border:"1px solid rgba(46,134,193,.25)",borderRadius:14,padding:"12px 13px",marginBottom:12}}>
-        <b style=${{fontFamily:"Cairo",fontSize:13.5,color:C.blueDp,display:"block",marginBottom:6}}>🔑 رمز المزامنة الخاص بك<//>
-        <p style=${{fontSize:11.5,color:C.sub,lineHeight:1.7,margin:"0 0 8px"}}>سرّي ويخصّ بياناتك وحدك. لفتح بياناتك على جهاز آخر: انسخه، والصقه في نفس الخانة هناك، ثم اضغط «استرجاع». لا تشاركه مع أحد.<//>
-        <${Field} value=${settings.syncCode||""} onChange=${(v)=>up({syncCode:v.trim()})} placeholder="رمز المزامنة" icon="gear"/>
-        <div style=${{marginTop:8}}><${Btn} size="sm" variant="soft" icon="share" onClick=${copyCode}>نسخ الرمز<//><//>
+      <div style=${{display:"flex",alignItems:"center",gap:8,marginBottom:6}}><${Icon} n="cloud" s=${18} c=${C.blue}/><h3 style=${{fontFamily:"Cairo",margin:0,fontSize:16,color:C.ink}}>المزامنة السحابية<//>${cloudState==="ok"&&html`<span style=${{fontSize:10,fontWeight:800,color:C.green,background:"rgba(14,124,102,.1)",padding:"3px 8px",borderRadius:10}}>متزامن ✓<//>`}${cloudState==="sync"&&html`<span style=${{fontSize:10,fontWeight:800,color:C.blue,background:"rgba(46,134,193,.1)",padding:"3px 8px",borderRadius:10}}>جارٍ المزامنة…<//>`}${cloudState==="err"&&html`<span style=${{fontSize:10,fontWeight:800,color:C.danger,background:"rgba(217,83,79,.1)",padding:"3px 8px",borderRadius:10}}>تعذّرت المزامنة<//>`}<//>
+      <div style=${{background:"rgba(14,124,102,.06)",border:"1px solid rgba(14,124,102,.2)",borderRadius:14,padding:"12px 13px",marginBottom:12}}>
+        <p style=${{fontSize:12.5,color:C.ink,lineHeight:1.8,margin:0,fontWeight:600}}>✅ قاعدة البيانات مفعّلة ومدمجة في التطبيق — لا حاجة لأي إعداد. كل ما تُدخله (الأطفال، التقييمات، الدروس، شرحها) يُحفظ على جهازك ويُرفع للسحابة تلقائيًا تحت حسابك.<//>
+        <p style=${{fontSize:11.5,color:C.sub,lineHeight:1.7,margin:"8px 0 0"}}>لاسترجاع بياناتك على أي جهاز: سجّل الدخول بنفس «اسم المعلّم» و«كلمة المرور» — وسترجع بياناتك تلقائيًا.<//>
       <//>
-      ${cloudState==="missing"&&html`<div style=${{background:"rgba(224,169,46,.12)",border:"1.5px solid "+C.amber,borderRadius:14,padding:"12px 13px",marginBottom:12}}>
-        <b style=${{fontFamily:"Cairo",fontSize:13.5,color:"#8a6d00",display:"block",marginBottom:6}}>⚙️ خطوة واحدة فقط لتفعيل المزامنة (مرة واحدة للأبد)<//>
-        <p style=${{fontSize:12,color:"#7a6200",lineHeight:1.7,margin:"0 0 10px"}}>افتح محرّر SQL في مشروعك، الصق الكود، واضغط Run.<//>
-        <div style=${{display:"grid",gap:8}}>
-          ${sbRef(settings.supabaseUrl)&&html`<a href=${"https://supabase.com/dashboard/project/"+sbRef(settings.supabaseUrl)+"/sql/new"} target="_blank" rel="noopener" className="mq-btn" style=${{background:C.gold,color:"#3a2d00",textDecoration:"none",justifyContent:"center"}}><${Icon} n="link" s=${17} c="#3a2d00"/> افتح محرّر SQL في مشروعك<//>`}
-          <${Btn} full=${true} variant="soft" icon="list" onClick=${copySQL}>نسخ كود SQL<//>
-        <//>
-      <//>`}
-      <div style=${{display:"grid",gap:11}}>
-        <${Field} value=${settings.supabaseUrl} onChange=${(v)=>up({supabaseUrl:v})} placeholder="https://xxxx.supabase.co" label="رابط المشروع (Project URL)" icon="link"/>
-        <${Field} value=${settings.supabaseKey} onChange=${(v)=>up({supabaseKey:v})} placeholder="anon / publishable key" label="المفتاح (anon key)" icon="gear"/>
-        ${cloudState!=="missing"&&html`<${Btn} full=${true} variant="soft" icon="list" onClick=${copySQL}>نسخ كود SQL لإنشاء الجدول<//>`}
-        <div style=${{display:"flex",gap:8}}>
-          <${Btn} full=${true} icon="cloudUp" onClick=${doBackup} disabled=${sbBusy==="up"}>${sbBusy==="up"?"جارٍ الرفع…":"رفع الآن"}<//>
-          <${Btn} full=${true} variant="blue" icon="cloud" onClick=${doRestore} disabled=${sbBusy==="down"}>${sbBusy==="down"?"جارٍ الجلب…":"استرجاع"}<//>
-        <//>
+      <div style=${{display:"flex",gap:8}}>
+        <${Btn} full=${true} icon="cloudUp" onClick=${doBackup} disabled=${sbBusy==="up"}>${sbBusy==="up"?"جارٍ الرفع…":"رفع نسخة الآن"}<//>
+        <${Btn} full=${true} variant="blue" icon="cloud" onClick=${doRestore} disabled=${sbBusy==="down"}>${sbBusy==="down"?"جارٍ الجلب…":"استرجاع يدوي"}<//>
       <//>
     <//>
-    <p style=${{textAlign:"center",fontSize:11,color:C.sub,lineHeight:1.7}}>تطبيق «مُعلّمي» · كل بياناتك محفوظة على هذا الجهاز<//>
+    <p style=${{textAlign:"center",fontSize:11,color:C.sub,lineHeight:1.7}}>تطبيق «مُعلّمي» · بياناتك محفوظة على جهازك وفي السحابة<//>
   <//>`;
 }
 
@@ -1235,7 +1242,7 @@ function NotesScreen({ notes, onChange, onBack, notify }){
   const del=(id)=>onChange(notes.filter(n=>n.id!==id));
   return html`<div className="mq-screen">
     <${Header} title="دفتر الملاحظات والمصادر" onBack=${onBack} sub="احفظ أفكارك وروابطك ومصادرك" right=${html`<button className="mq-icon-sm" onClick=${()=>setOpen(true)}><${Icon} n="plus" s=${18} c=${C.green}/><//>`}/>
-    ${notes.length===0?html`<${Empty} icon="note" text="لا ملاحظات بعد" sub="أضف ملاحظة أو الصق رابطًا/مصدرًا من واتساب أو Notion هنا"/>`:html`<div style=${{display:"grid",gap:11}}>
+    ${notes.length===0?html`<${Empty} icon="note" text="لا ملاحظات بعد" sub="أضف ملاحظة أو الصق نصًا/مصدرًا من واتساب هنا"/>`:html`<div style=${{display:"grid",gap:11}}>
       ${notes.map(n=>html`<div key=${n.id} className="mq-card">
         <div style=${{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
           <div style=${{flex:1}}><b style=${{fontSize:15,color:C.ink,fontFamily:"Cairo"}}>${n.title}<//><p style=${{margin:"2px 0 0",fontSize:11,color:C.sub}}>${fmtDate(n.date)}<//><//>
@@ -1289,7 +1296,7 @@ function ProfileScreen({ state, openSettings, openTeam, openNotes, onShare, onDe
       <b style=${{fontFamily:"Cairo",fontSize:15,color:C.ink,display:"block",marginBottom:6}}>الأدوات والإعدادات<//>
       <button className="mq-setting-row" onClick=${openSettings}><div className="mq-mini-ic2"><${Icon} n="bot" s=${17} c=${C.green}/><//><div style=${{flex:1}}><b style=${{fontSize:14,color:C.ink,display:"block"}}>إعدادات الذكاء الاصطناعي<//><span style=${{fontSize:12,color:C.sub}}>Gemini مجاني · ChatGPT · Claude + نسخ سحابي<//><//><${Icon} n="chevL" s=${18} c=${C.line}/><//>
       <button className="mq-setting-row" onClick=${openTeam}><div className="mq-mini-ic2"><${Icon} n="team" s=${17} c=${C.green}/><//><div style=${{flex:1}}><b style=${{fontSize:14,color:C.ink,display:"block"}}>إدارة الفريق<//><span style=${{fontSize:12,color:C.sub}}>${(state.team||[]).length} عضو<//><//><${Icon} n="chevL" s=${18} c=${C.line}/><//>
-      <button className="mq-setting-row" onClick=${openNotes}><div className="mq-mini-ic2"><${Icon} n="note" s=${17} c=${C.green}/><//><div style=${{flex:1}}><b style=${{fontSize:14,color:C.ink,display:"block"}}>دفتر الملاحظات والمصادر<//><span style=${{fontSize:12,color:C.sub}}>${(state.notes||[]).length} ملاحظة · استيراد من واتساب/Notion<//><//><${Icon} n="chevL" s=${18} c=${C.line}/><//>
+      <button className="mq-setting-row" onClick=${openNotes}><div className="mq-mini-ic2"><${Icon} n="note" s=${17} c=${C.green}/><//><div style=${{flex:1}}><b style=${{fontSize:14,color:C.ink,display:"block"}}>دفتر الملاحظات والمصادر<//><span style=${{fontSize:12,color:C.sub}}>${(state.notes||[]).length} ملاحظة · احفظ أفكارك ومصادرك<//><//><${Icon} n="chevL" s=${18} c=${C.line}/><//>
       <button className="mq-setting-row" onClick=${onShare}><div className="mq-mini-ic2"><${Icon} n="share" s=${17} c=${C.green}/><//><div style=${{flex:1}}><b style=${{fontSize:14,color:C.ink,display:"block"}}>مشاركة ملخّص الحلقة<//><span style=${{fontSize:12,color:C.sub}}>عبر واتساب أو أي تطبيق<//><//><${Icon} n="chevL" s=${18} c=${C.line}/><//>
     <//>
     <div style=${{display:"grid",gap:10,marginTop:16}}>
@@ -1343,6 +1350,11 @@ function TabBar({ active, onChange }){
 
 function freshSubjects(){ return SUBJECT_SEED.map(s=>({id:s.id,name:s.name,emoji:s.emoji,color:s.color,objectives:s.objectives.slice(),lessons:s.lessons.map(l=>({id:rid(),title:l.title,prepared:false,content:"",summary:"",dev:null}))})); }
 function newStateForLogin(teacher){ return {teacher:teacher,subjects:freshSubjects(),students:[],season:null,archive:[],team:[],notes:[]}; }
+/* مقياس «امتلاء» الحالة — لمنع استبدال بيانات حقيقية ببيانات فارغة/بذرة أثناء المزامنة. */
+function dataScore(s){ if(!s||!s.teacher) return 0; let n=0;
+  (s.subjects||[]).forEach(sub=>{ (sub.lessons||[]).forEach(l=>{ if(l.prepared) n+=2; if(l.content&&l.content.trim()) n+=2; if(l.summary) n++; if(l.tree||l.dev||l.schedule||l.exams) n++; }); if(!SUBJECT_SEED.find(x=>x.id===sub.id)) n+=2; });
+  n+=(s.students||[]).length*3; (s.students||[]).forEach(st=>n+=(st.assessments||[]).length);
+  n+=(s.notes||[]).length+(s.team||[]).length+(s.archive||[]).length; if(s.season) n+=2; return n; }
 
 function App(){
   const [state,setState]=useState(()=>loadState());
@@ -1352,13 +1364,41 @@ function App(){
   const [toast,setToast]=useState(""); const toastT=useRef(null);
   const [cloudState,setCloudState]=useState("idle");
   const syncedRef=useRef(false); const pushT=useRef(null); const sessionMode=useRef("auto"); const skipPush=useRef(false);
+  const stateRef=useRef(state); useEffect(()=>{ stateRef.current=state; },[state]);
   const initialT=useRef(+(localStorage.getItem("muallim_t")||0));
   useEffect(()=>{ const sp=document.getElementById("splash"); if(sp) sp.style.display="none"; },[]);
   const notify=(m)=>{ setToast(m); clearTimeout(toastT.current); toastT.current=setTimeout(()=>setToast(""),3500); };
-  useEffect(()=>{ if(!state) return; saveState(state); const t=Date.now(); localStorage.setItem("muallim_t",String(t)); if(!syncedRef.current) return; if(skipPush.current){ skipPush.current=false; return; } if(!getSB(loadSettings())) return; clearTimeout(pushT.current); pushT.current=setTimeout(async()=>{ setCloudState("sync"); const r=await cloudPut(state,new Date(t).toISOString()); setCloudState(r.ok?"ok":(r.missing?"missing":"err")); },1400); },[state]);
+  // حفظ محلي فوري + رفع سحابي مؤجّل عند كل تغيير
+  useEffect(()=>{ if(!state) return; saveState(state); const t=Date.now(); localStorage.setItem("muallim_t",String(t)); if(!syncedRef.current) return; if(skipPush.current){ skipPush.current=false; return; } clearTimeout(pushT.current); pushT.current=setTimeout(async()=>{ setCloudState("sync"); const r=await cloudPut(state,new Date(t).toISOString()); setCloudState(r.ok?"ok":"err"); },1200); },[state]);
   useEffect(()=>{ saveSettings(settings); },[settings]);
-  useEffect(()=>{ if(!state||syncedRef.current) return; if(!getSB(loadSettings())){ syncedRef.current=true; return; } syncedRef.current=true; (async()=>{ setCloudState("sync"); const r=await cloudGet(); if(!r.ok){ setCloudState(r.missing?"missing":"err"); if(r.missing) notify("لتفعيل المزامنة جهّز جدول السحابة مرة واحدة من الإعدادات ⚙️"); sessionMode.current="auto"; return; } const localT=initialT.current; if(r.data&&r.data.teacher){ const cloudT=Date.parse(r.updatedAt)||0; if(sessionMode.current==="pull"||cloudT>localT){ skipPush.current=true; setState(Object.assign({team:[],notes:[],archive:[]},r.data)); localStorage.setItem("muallim_t",String(cloudT||Date.now())); sessionMode.current="auto"; setCloudState("ok"); notify("تم استرجاع بياناتك من السحابة ☁️✓"); return; } } sessionMode.current="auto"; const pr=await cloudPut(state,new Date().toISOString()); setCloudState(pr.ok?"ok":(pr.missing?"missing":"err")); })(); },[state]);
-  const login=(t)=>{ sessionMode.current="pull"; localStorage.setItem("muallim_t","0"); initialT.current=0; syncedRef.current=false; setState(newStateForLogin(t)); setTab("home"); setRoute(null); };
+  // رفع فوري قبل إغلاق التطبيق/الانتقال للخلفية حتى لا تضيع أي مدخلات لم تُرفع بعد
+  useEffect(()=>{ const flush=()=>{ if(!syncedRef.current) return; const s=stateRef.current; if(!s||!s.teacher) return; try{ clearTimeout(pushT.current); cloudPut(s,new Date().toISOString()); }catch(e){} };
+    const onVis=()=>{ if(document.visibilityState==="hidden") flush(); };
+    document.addEventListener("visibilitychange",onVis); window.addEventListener("pagehide",flush);
+    return ()=>{ document.removeEventListener("visibilitychange",onVis); window.removeEventListener("pagehide",flush); }; },[]);
+  // المزامنة الأولية: دمج آمن لا يستبدل أبدًا بيانات حقيقية ببيانات فارغة
+  useEffect(()=>{ if(!state||syncedRef.current) return; syncedRef.current=true; (async()=>{
+    setCloudState("sync"); const r=await cloudGet();
+    if(!r.ok){ setCloudState("err"); sessionMode.current="auto"; return; }
+    const cloudHas=r.data&&r.data.teacher; const cloudScore=cloudHas?dataScore(r.data):0; const localScore=dataScore(state);
+    const cloudT=Date.parse(r.updatedAt)||0; const localT=initialT.current;
+    const adoptCloud=()=>{ skipPush.current=true; setState(Object.assign({team:[],notes:[],archive:[],students:[],subjects:freshSubjects()},r.data)); localStorage.setItem("muallim_t",String(cloudT||Date.now())); setCloudState("ok"); notify("تم استرجاع بياناتك من حسابك ☁️✓"); };
+    const pushLocal=async()=>{ const pr=await cloudPut(state,new Date().toISOString()); setCloudState(pr.ok?"ok":"err"); };
+    if(sessionMode.current==="pull"){ // دخول جديد: استرجع بيانات الحساب إن وُجدت
+      sessionMode.current="auto";
+      if(cloudHas&&cloudScore>0) return adoptCloud();
+      return pushLocal();
+    }
+    sessionMode.current="auto";
+    if(cloudHas&&cloudScore>0){
+      if(localScore<=0) return adoptCloud();              // المحلي فارغ → اجلب السحابة
+      if(cloudScore>localScore && cloudT>=localT) return adoptCloud(); // السحابة أغنى وأحدث
+      if(cloudT>localT && cloudScore>=localScore) return adoptCloud(); // السحابة أحدث وليست أفقر
+      return pushLocal();                                  // المحلي أغنى/أحدث → ارفعه
+    }
+    return pushLocal();                                    // لا شيء في السحابة → ازرع المحلي
+  })(); },[state]);
+  const login=(t,pass)=>{ const code=accountCodeFrom(t&&t.name,pass); const cur=loadSettings(); const ns=Object.assign({},cur,{syncCode:code}); saveSettings(ns); setSettings(ns); _sbClient=null; sessionMode.current="pull"; localStorage.setItem("muallim_t","0"); initialT.current=0; syncedRef.current=false; setState(newStateForLogin(t)); setTab("home"); setRoute(null); };
   const logout=()=>{ setState(null); setTab("home"); setRoute(null); };
   const updateSubject=(subj)=>setState(prev=>Object.assign({},prev,{subjects:prev.subjects.map(s=>s.id===subj.id?subj:s)}));
   const updateLesson=(sid,lesson)=>setState(prev=>Object.assign({},prev,{subjects:prev.subjects.map(s=>s.id===sid?Object.assign({},s,{lessons:s.lessons.map(l=>l.id===lesson.id?lesson:l)}):s)}));

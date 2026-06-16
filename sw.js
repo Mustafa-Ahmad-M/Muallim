@@ -1,8 +1,8 @@
-/* مُعلّمي — Service Worker v2
+/* مُعلّمي — Service Worker v3
    إصلاح: app.js كان يُخزَّن "cache-first" فيبقى المستخدم على نسخة قديمة بعد كل تحديث.
    الآن: الكود والتنقّل "network-first" (تصل التحديثات فورًا)، وباقي الملفات
    "stale-while-revalidate" (سريعة وتُحدَّث في الخلفية)، مع تنظيف الكاش القديم. */
-const CACHE = "muallim-v2";
+const CACHE = "muallim-v3";
 const ASSETS = [
   "./", "./index.html", "./app.js", "./manifest.webmanifest",
   "./icon-180.png", "./icon-192.png", "./icon-512.png"
