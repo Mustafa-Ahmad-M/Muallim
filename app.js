@@ -191,11 +191,9 @@ const GEM_KEY="";
    بالكامل عبر RLS، ولا يمرّ الوصول إلا عبر دالتين آمنتين تتطلّبان «مفتاح الحساب» السرّي. */
 const SB_URL="https://fqnsjgkquezrtnkmrxhj.supabase.co";
 const SB_KEY="sb_publishable_ULGxbDMRM6YRQErAUtkLUw_R7fZofv2";
-const DEFAULT_SETTINGS={ provider:"gemini", models:{claude:"claude-haiku-4-5-20251001",openai:"gpt-4o-mini",gemini:"gemini-2.5-flash"}, keys:{claude:"",openai:"",gemini:GEM_KEY}, syncCode:"" };
+const DEFAULT_SETTINGS={ provider:"gemini", models:{claude:"claude-haiku-4-5-20251001",openai:"gpt-4o-mini",gemini:"gemini-2.5-flash"}, keys:{claude:"",openai:"",gemini:GEM_KEY}, authEmail:"", authPass:"", authName:"", syncCode:"" };
 
-/* تجزئة ثابتة (cyrb53) — لاشتقاق «مفتاح حساب» ثابت من اسم المعلّم + كلمة المرور.
-   نفس البيانات تُنتج نفس المفتاح دائمًا، فتُسترجع بيانات المعلّم على أي جهاز
-   وبعد أي مسح للذاكرة، ولا تختلط بيانات المعلّمين ببعضها أبدًا. */
+/* تجزئة ثابتة (cyrb53) — تُستخدم فقط لاسترجاع «النُّسخ القديمة» المحفوظة بالنظام السابق. */
 function cyrb53(str, seed=0){
   let h1=0xdeadbeef^seed, h2=0x41c6ce57^seed;
   for(let i=0,ch;i<str.length;i++){ ch=str.charCodeAt(i); h1=Math.imul(h1^ch,2654435761); h2=Math.imul(h2^ch,1597334677); }
@@ -208,20 +206,19 @@ function accountCodeFrom(name,pass){
   const id=String(name||"").trim().toLowerCase()+"::"+String(pass||"").trim();
   return "u_"+cyrb53(ACCT_SALT+"::"+id,7)+cyrb53(id+"::"+ACCT_SALT,99);
 }
-function genCode(){ return (rid()+rid()+rid()+rid()+rid()+rid()).slice(0,40); }
-function ensureCode(o){ if(!o.syncCode){ o.syncCode=genCode(); try{ localStorage.setItem(SET_KEY, JSON.stringify(o)); }catch(e){} } return o; }
 function loadSettings(){
   const d=JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
-  try{ const r=localStorage.getItem(SET_KEY); if(!r) return ensureCode(d);
+  try{ const r=localStorage.getItem(SET_KEY); if(!r) return d;
     const s=JSON.parse(r);
     const out=Object.assign({},d,s);
     out.models=Object.assign({},d.models,s.models||{});
     out.keys={}; ["claude","openai","gemini"].forEach(k=>{ out.keys[k]=(s.keys&&s.keys[k])?s.keys[k]:d.keys[k]; });
+    out.authEmail=s.authEmail||""; out.authPass=s.authPass||""; out.authName=s.authName||"";
     out.syncCode=s.syncCode||"";
-    delete out.supabaseUrl; delete out.supabaseKey; // لم تعد قابلة للتعديل — مدمجة في التطبيق
+    delete out.supabaseUrl; delete out.supabaseKey;
     if(!out.provider) out.provider=d.provider;
-    return ensureCode(out);
-  }catch(e){ return ensureCode(d); }
+    return out;
+  }catch(e){ return d; }
 }
 function saveSettings(s){ try{ localStorage.setItem(SET_KEY, JSON.stringify(s)); }catch(e){} }
 
@@ -294,11 +291,25 @@ async function callAI(prompt, system, wantJSON){
 /* عميل Supabase مدمج — يُنشأ مرة واحدة من ثوابت التطبيق، بلا أي إعداد من المستخدم. */
 let _sbClient=null;
 function getSB(){ if(_sbClient) return _sbClient; if(window.supabase&&SB_URL&&SB_KEY){ try{ _sbClient=window.supabase.createClient(SB_URL,SB_KEY); return _sbClient; }catch(e){ return null; } } return null; }
-function syncCodeOf(cfg){ return (cfg&&cfg.syncCode)||""; }
-async function backupCloud(state){ const sb=getSB(); if(!sb) throw new Error("تعذّر الاتصال بالخدمة السحابية، تحقّق من الإنترنت"); const r=await sb.rpc("put_backup",{p_code:syncCodeOf(loadSettings()),p_data:state,p_iso:new Date().toISOString()}); if(r.error) throw new Error(r.error.message); }
-async function restoreCloud(){ const sb=getSB(); if(!sb) throw new Error("تعذّر الاتصال بالخدمة السحابية، تحقّق من الإنترنت"); const r=await sb.rpc("get_backup",{p_code:syncCodeOf(loadSettings())}); if(r.error) throw new Error(r.error.message); const row=r.data&&r.data[0]; if(!row||!row.data) throw new Error("لا توجد نسخة محفوظة بهذا الحساب بعد"); return row.data; }
-async function cloudGet(){ const sb=getSB(); if(!sb) return {ok:false}; try{ const r=await sb.rpc("get_backup",{p_code:syncCodeOf(loadSettings())}); if(r.error) return {ok:false,err:r.error.message}; const row=r.data&&r.data[0]; return {ok:true,data:row&&row.data,updatedAt:row&&row.updated_at}; }catch(e){ return {ok:false,err:e.message}; } }
-async function cloudPut(state,iso){ const sb=getSB(); if(!sb) return {ok:false}; try{ const r=await sb.rpc("put_backup",{p_code:syncCodeOf(loadSettings()),p_data:state,p_iso:iso||new Date().toISOString()}); if(r.error) return {ok:false,err:r.error.message}; return {ok:true}; }catch(e){ return {ok:false,err:e.message}; } }
+function authOf(cfg){ cfg=cfg||loadSettings(); return {email:(cfg.authEmail||"").trim().toLowerCase(), pass:cfg.authPass||""}; }
+
+/* نظام الحسابات المُتحقَّق منه: البريد هوية ثابتة، وكلمة المرور تُتحقَّق على السيرفر.
+   status: 'ok' | 'new' (لا حساب بهذا البريد بعد) | 'denied' (كلمة مرور خاطئة) | 'neterr' (لا اتصال) */
+async function accountSync(write, state){
+  const sb=getSB(); if(!sb) return {status:"neterr"};
+  const a=authOf(); if(!a.email||!a.pass) return {status:"denied"};
+  try{
+    const r=await sb.rpc("account_sync",{p_email:a.email,p_pass:a.pass,p_data:write?state:null,p_write:!!write});
+    if(r.error) return {status:"neterr",err:r.error.message};
+    const row=r.data&&r.data[0]; if(!row) return {status:"neterr"};
+    return {status:row.status, data:row.data, updatedAt:row.updated_at};
+  }catch(e){ return {status:"neterr",err:e.message}; }
+}
+// أغلفة للتوافق مع باقي الكود (الإعدادات: رفع/استرجاع يدوي)
+async function backupCloud(state){ const r=await accountSync(true,state); if(r.status==="ok") return; if(r.status==="denied") throw new Error("سجّل الدخول ببريدك وكلمة مرورك أولًا"); throw new Error("تعذّر الاتصال بالخدمة السحابية، تحقّق من الإنترنت"); }
+async function restoreCloud(){ const r=await accountSync(false,null); if(r.status==="ok"){ if(!r.data||!r.data.teacher) throw new Error("لا توجد بيانات محفوظة بهذا الحساب بعد"); return r.data; } if(r.status==="new") throw new Error("لا يوجد حساب بهذا البريد بعد — ستُحفظ بياناتك تلقائيًا أول مرة"); if(r.status==="denied") throw new Error("كلمة المرور غير صحيحة لهذا البريد"); throw new Error("تعذّر الاتصال بالخدمة السحابية، تحقّق من الإنترنت"); }
+// استرجاع «نسخة قديمة» محفوظة بالنظام السابق (الاسم + كلمة المرور القديمين)
+async function restoreLegacy(name,pass){ const sb=getSB(); if(!sb) throw new Error("تعذّر الاتصال، تحقّق من الإنترنت"); const code=accountCodeFrom(name,pass); const r=await sb.rpc("get_backup",{p_code:code}); if(r.error) throw new Error(r.error.message); const row=r.data&&r.data[0]; if(!row||!row.data||!row.data.teacher) throw new Error("لم نجد نسخة قديمة بهذا الاسم وكلمة المرور"); return row.data; }
 
 const todayISO=()=>new Date().toISOString();
 const fmtDate=(iso)=>new Date(iso).toLocaleDateString("ar-EG",{day:"numeric",month:"long"});
@@ -438,24 +449,27 @@ function FsEditor({ open, value, onChange, onClose, title }){
   <//>`;
 }
 
-function Login({ onLogin }){
-  const [name,setName]=useState(""); const [pass,setPass]=useState("");
-  const go=()=>onLogin({name:name.trim()||"المعلّم",email:"teacher@local"},pass);
+function Login({ onLogin, initialEmail, initialName, authError }){
+  const [name,setName]=useState(initialName||""); const [email,setEmail]=useState(initialEmail||""); const [pass,setPass]=useState(""); const [err,setErr]=useState("");
+  const go=()=>{ const em=(email||"").trim().toLowerCase(); if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)){ setErr("اكتب بريدًا إلكترونيًا صحيحًا"); return; } if((pass||"").length<4){ setErr("كلمة المرور 4 أحرف على الأقل"); return; } setErr(""); onLogin(em,pass,name.trim()||"المعلّم"); };
+  const msg=err||authError;
   return html`<div className="mq-login">
     <div className="mq-blob b1"/><div className="mq-blob b2"/><div className="mq-blob b3"/>
     <div className="mq-login-card">
       <div className="mq-logo"><${Icon} n="cap" s=${34} c="#fff"/><//>
       <h1 style=${{fontFamily:"Cairo",fontSize:27,margin:"16px 0 4px",color:C.ink}}>مُعلّمي<//>
-      <p style=${{color:C.sub,margin:"0 0 22px",fontSize:14}}>مساعدك الذكي في تحضير وتنظيم حلقات الأطفال<//>
+      <p style=${{color:C.sub,margin:"0 0 20px",fontSize:14}}>سجّل دخولك ليُحفظ كل شيء في حسابك ويُسترجع على أي جهاز<//>
+      ${msg&&html`<div style=${{background:"rgba(217,83,79,.1)",border:"1px solid rgba(217,83,79,.35)",borderRadius:12,padding:"9px 12px",marginBottom:12}}><p style=${{fontSize:12.5,color:C.danger,margin:0,fontWeight:600}}>⚠️ ${msg}<//><//>`}
       <div style=${{display:"grid",gap:11}}>
-        <${Field} value=${name} onChange=${setName} placeholder="اسم المعلّم" icon="user"/>
+        <${Field} value=${name} onChange=${setName} placeholder="اسم المعلّم (اختياري)" icon="user"/>
+        <${Field} value=${email} onChange=${setEmail} placeholder="البريد الإلكتروني" type="email" icon="link"/>
         <${Field} value=${pass} onChange=${setPass} placeholder="كلمة المرور" type="password" icon="gear"/>
-        <${Btn} full=${true} icon="play" onClick=${go}>دخول وبدء العمل<//>
+        <${Btn} full=${true} icon="play" onClick=${go}>دخول / إنشاء حساب<//>
       <//>
       <div style=${{background:"rgba(14,124,102,.07)",borderRadius:12,padding:"11px 13px",marginTop:16,textAlign:"right"}}>
-        <p style=${{fontSize:11.5,color:C.green,margin:0,lineHeight:1.7,fontWeight:600}}>🔒 بياناتك مربوطة بـ«اسمك + كلمة المرور». ادخل بنفس الاسم وكلمة المرور على أي جهاز لاسترجاع كل بياناتك تلقائيًا. لا تنسَ كلمة المرور.<//>
+        <p style=${{fontSize:11.5,color:C.green,margin:0,lineHeight:1.7,fontWeight:600}}>🔒 حسابك = «بريدك + كلمة المرور». أول مرة يُنشأ تلقائيًا، وبعدها ادخل بنفس البريد وكلمة المرور على أي جهاز لترجع كل بياناتك. كلمة مرور خاطئة تُرفَض ولا تنشئ حسابًا فارغًا.<//>
       <//>
-      <p style=${{fontSize:11,color:C.sub,marginTop:14}}>يُحفظ محتواك تلقائيًا على جهازك وفي السحابة<//>
+      <p style=${{fontSize:11,color:C.sub,marginTop:14}}>يُحفظ محتواك تلقائيًا على جهازك وفي السحابة معًا<//>
     <//>
   <//>`;
 }
@@ -1175,6 +1189,8 @@ function SettingsScreen({ settings, setSettings, state, applyState, notify, clou
   const setModel=(v)=>up({models:Object.assign({},settings.models,{[p]:v})});
   const doBackup=async()=>{ setSbBusy("up"); try{ await backupCloud(state); notify("تم رفع نسخة احتياطية ✓"); }catch(e){ notify(e.message); } setSbBusy(""); };
   const doRestore=async()=>{ setSbBusy("down"); try{ const d=await restoreCloud(); if(d){ applyState(d); notify("تم الاسترجاع من السحابة ✓"); } }catch(e){ notify(e.message); } setSbBusy(""); };
+  const [legacyOpen,setLegacyOpen]=useState(false); const [lgName,setLgName]=useState(""); const [lgPass,setLgPass]=useState("");
+  const doLegacy=async()=>{ setSbBusy("lg"); try{ const d=await restoreLegacy(lgName,lgPass); if(d){ applyState(d); setLegacyOpen(false); notify("تم استرجاع نسختك القديمة ✓ — ستُحفظ في حسابك الحالي"); } }catch(e){ notify(e.message); } setSbBusy(""); };
   const customModel=!MODELS[p].find(m=>m.id===settings.models[p]);
   return html`<div className="mq-screen">
     <${Header} title="الإعدادات" onBack=${onBack}/>
@@ -1200,17 +1216,29 @@ function SettingsScreen({ settings, setSettings, state, applyState, notify, clou
       <//>
     <//>
     <div className="mq-card" style=${{marginBottom:16}}>
-      <div style=${{display:"flex",alignItems:"center",gap:8,marginBottom:6}}><${Icon} n="cloud" s=${18} c=${C.blue}/><h3 style=${{fontFamily:"Cairo",margin:0,fontSize:16,color:C.ink}}>المزامنة السحابية<//>${cloudState==="ok"&&html`<span style=${{fontSize:10,fontWeight:800,color:C.green,background:"rgba(14,124,102,.1)",padding:"3px 8px",borderRadius:10}}>متزامن ✓<//>`}${cloudState==="sync"&&html`<span style=${{fontSize:10,fontWeight:800,color:C.blue,background:"rgba(46,134,193,.1)",padding:"3px 8px",borderRadius:10}}>جارٍ المزامنة…<//>`}${cloudState==="err"&&html`<span style=${{fontSize:10,fontWeight:800,color:C.danger,background:"rgba(217,83,79,.1)",padding:"3px 8px",borderRadius:10}}>تعذّرت المزامنة<//>`}<//>
+      <div style=${{display:"flex",alignItems:"center",gap:8,marginBottom:6}}><${Icon} n="cloud" s=${18} c=${C.blue}/><h3 style=${{fontFamily:"Cairo",margin:0,fontSize:16,color:C.ink}}>الحساب والمزامنة<//>${cloudState==="ok"&&html`<span style=${{fontSize:10,fontWeight:800,color:C.green,background:"rgba(14,124,102,.1)",padding:"3px 8px",borderRadius:10}}>متزامن ✓<//>`}${cloudState==="sync"&&html`<span style=${{fontSize:10,fontWeight:800,color:C.blue,background:"rgba(46,134,193,.1)",padding:"3px 8px",borderRadius:10}}>جارٍ المزامنة…<//>`}${cloudState==="err"&&html`<span style=${{fontSize:10,fontWeight:800,color:C.danger,background:"rgba(217,83,79,.1)",padding:"3px 8px",borderRadius:10}}>تعذّرت المزامنة<//>`}<//>
       <div style=${{background:"rgba(14,124,102,.06)",border:"1px solid rgba(14,124,102,.2)",borderRadius:14,padding:"12px 13px",marginBottom:12}}>
-        <p style=${{fontSize:12.5,color:C.ink,lineHeight:1.8,margin:0,fontWeight:600}}>✅ قاعدة البيانات مفعّلة ومدمجة في التطبيق — لا حاجة لأي إعداد. كل ما تُدخله (الأطفال، التقييمات، الدروس، شرحها) يُحفظ على جهازك ويُرفع للسحابة تلقائيًا تحت حسابك.<//>
-        <p style=${{fontSize:11.5,color:C.sub,lineHeight:1.7,margin:"8px 0 0"}}>لاسترجاع بياناتك على أي جهاز: سجّل الدخول بنفس «اسم المعلّم» و«كلمة المرور» — وسترجع بياناتك تلقائيًا.<//>
+        <p style=${{fontSize:12.5,color:C.ink,lineHeight:1.8,margin:0,fontWeight:600}}>✅ مسجّل الدخول بـ: <span style=${{color:C.green,direction:"ltr",display:"inline-block"}}>${settings.authEmail||"—"}<//><//>
+        <p style=${{fontSize:11.5,color:C.sub,lineHeight:1.7,margin:"8px 0 0"}}>كل ما تُدخله (الأطفال، التقييمات، الدروس وشرحها) يُحفظ على جهازك ويُرفع لحسابك تلقائيًا. لاسترجاعه على أي جهاز ادخل بنفس البريد وكلمة المرور.<//>
       <//>
-      <div style=${{display:"flex",gap:8}}>
+      <div style=${{display:"flex",gap:8,marginBottom:10}}>
         <${Btn} full=${true} icon="cloudUp" onClick=${doBackup} disabled=${sbBusy==="up"}>${sbBusy==="up"?"جارٍ الرفع…":"رفع نسخة الآن"}<//>
-        <${Btn} full=${true} variant="blue" icon="cloud" onClick=${doRestore} disabled=${sbBusy==="down"}>${sbBusy==="down"?"جارٍ الجلب…":"استرجاع يدوي"}<//>
+        <${Btn} full=${true} variant="blue" icon="cloud" onClick=${doRestore} disabled=${sbBusy==="down"}>${sbBusy==="down"?"جارٍ الجلب…":"استرجاع من حسابي"}<//>
       <//>
+      ${!legacyOpen?html`<button onClick=${()=>setLegacyOpen(true)} style=${{background:"none",border:"none",color:C.blue,fontSize:12.5,fontWeight:700,cursor:"pointer",padding:0}}>هل فقدت بيانات من نسخة قديمة؟ استرجعها بالاسم وكلمة المرور القديمين ↩</button>`:html`<div style=${{background:"rgba(46,134,193,.06)",border:"1px solid rgba(46,134,193,.2)",borderRadius:14,padding:"12px 13px"}}>
+        <b style=${{fontFamily:"Cairo",fontSize:13,color:C.blueDp,display:"block",marginBottom:8}}>استرجاع نسخة قديمة<//>
+        <p style=${{fontSize:11.5,color:C.sub,lineHeight:1.7,margin:"0 0 9px"}}>اكتب «اسم المعلّم» و«كلمة المرور» اللذين كنت تستخدمهما في النسخة السابقة، وسنجلب بياناتك ونحفظها في حسابك الحالي.<//>
+        <div style=${{display:"grid",gap:9}}>
+          <${Field} value=${lgName} onChange=${setLgName} placeholder="الاسم القديم" icon="user"/>
+          <${Field} value=${lgPass} onChange=${setLgPass} placeholder="كلمة المرور القديمة" type="password" icon="gear"/>
+          <div style=${{display:"flex",gap:8}}>
+            <${Btn} full=${true} icon="cloud" onClick=${doLegacy} disabled=${sbBusy==="lg"}>${sbBusy==="lg"?"جارٍ البحث…":"استرجاع النسخة القديمة"}<//>
+            <${Btn} variant="soft" onClick=${()=>setLegacyOpen(false)}>إلغاء<//>
+          <//>
+        <//>
+      <//>`}
     <//>
-    <p style=${{textAlign:"center",fontSize:11,color:C.sub,lineHeight:1.7}}>تطبيق «مُعلّمي» · بياناتك محفوظة على جهازك وفي السحابة<//>
+    <p style=${{textAlign:"center",fontSize:11,color:C.sub,lineHeight:1.7}}>تطبيق «مُعلّمي» · بياناتك محفوظة على جهازك وفي حسابك السحابي<//>
   <//>`;
 }
 
@@ -1363,43 +1391,52 @@ function App(){
   const [seasonOpen,setSeasonOpen]=useState(false);
   const [toast,setToast]=useState(""); const toastT=useRef(null);
   const [cloudState,setCloudState]=useState("idle");
-  const syncedRef=useRef(false); const pushT=useRef(null); const sessionMode=useRef("auto"); const skipPush=useRef(false);
+  const [authError,setAuthError]=useState("");
+  const syncedRef=useRef(false); const pushT=useRef(null); const sessionMode=useRef("auto"); const skipPush=useRef(false); const deniedRef=useRef(false);
   const stateRef=useRef(state); useEffect(()=>{ stateRef.current=state; },[state]);
   const initialT=useRef(+(localStorage.getItem("muallim_t")||0));
   useEffect(()=>{ const sp=document.getElementById("splash"); if(sp) sp.style.display="none"; },[]);
   const notify=(m)=>{ setToast(m); clearTimeout(toastT.current); toastT.current=setTimeout(()=>setToast(""),3500); };
-  // حفظ محلي فوري + رفع سحابي مؤجّل عند كل تغيير
-  useEffect(()=>{ if(!state) return; saveState(state); const t=Date.now(); localStorage.setItem("muallim_t",String(t)); if(!syncedRef.current) return; if(skipPush.current){ skipPush.current=false; return; } clearTimeout(pushT.current); pushT.current=setTimeout(async()=>{ setCloudState("sync"); const r=await cloudPut(state,new Date(t).toISOString()); setCloudState(r.ok?"ok":"err"); },1200); },[state]);
+  // حفظ محلي فوري دائمًا + رفع سحابي مؤجّل مُتحقَّق منه عند كل تغيير
+  useEffect(()=>{ if(!state) return; saveState(state); const t=Date.now(); localStorage.setItem("muallim_t",String(t)); if(!syncedRef.current||deniedRef.current) return; if(skipPush.current){ skipPush.current=false; return; } clearTimeout(pushT.current); pushT.current=setTimeout(async()=>{ setCloudState("sync"); const r=await accountSync(true,stateRef.current); if(r.status==="ok") setCloudState("ok"); else if(r.status==="denied"){ deniedRef.current=true; setCloudState("err"); notify("توقّفت المزامنة: كلمة المرور غير صحيحة. سجّل الدخول من جديد."); } else setCloudState("err"); },1100); },[state]);
   useEffect(()=>{ saveSettings(settings); },[settings]);
   // رفع فوري قبل إغلاق التطبيق/الانتقال للخلفية حتى لا تضيع أي مدخلات لم تُرفع بعد
-  useEffect(()=>{ const flush=()=>{ if(!syncedRef.current) return; const s=stateRef.current; if(!s||!s.teacher) return; try{ clearTimeout(pushT.current); cloudPut(s,new Date().toISOString()); }catch(e){} };
+  useEffect(()=>{ const flush=()=>{ if(!syncedRef.current||deniedRef.current) return; const s=stateRef.current; if(!s||!s.teacher) return; try{ clearTimeout(pushT.current); accountSync(true,s); }catch(e){} };
     const onVis=()=>{ if(document.visibilityState==="hidden") flush(); };
     document.addEventListener("visibilitychange",onVis); window.addEventListener("pagehide",flush);
     return ()=>{ document.removeEventListener("visibilitychange",onVis); window.removeEventListener("pagehide",flush); }; },[]);
-  // المزامنة الأولية: دمج آمن لا يستبدل أبدًا بيانات حقيقية ببيانات فارغة
-  useEffect(()=>{ if(!state||syncedRef.current) return; syncedRef.current=true; (async()=>{
-    setCloudState("sync"); const r=await cloudGet();
-    if(!r.ok){ setCloudState("err"); sessionMode.current="auto"; return; }
-    const cloudHas=r.data&&r.data.teacher; const cloudScore=cloudHas?dataScore(r.data):0; const localScore=dataScore(state);
-    const cloudT=Date.parse(r.updatedAt)||0; const localT=initialT.current;
-    const adoptCloud=()=>{ skipPush.current=true; setState(Object.assign({team:[],notes:[],archive:[],students:[],subjects:freshSubjects()},r.data)); localStorage.setItem("muallim_t",String(cloudT||Date.now())); setCloudState("ok"); notify("تم استرجاع بياناتك من حسابك ☁️✓"); };
-    const pushLocal=async()=>{ const pr=await cloudPut(state,new Date().toISOString()); setCloudState(pr.ok?"ok":"err"); };
-    if(sessionMode.current==="pull"){ // دخول جديد: استرجع بيانات الحساب إن وُجدت
-      sessionMode.current="auto";
-      if(cloudHas&&cloudScore>0) return adoptCloud();
-      return pushLocal();
+  // المزامنة الأولية: تحقّق من الحساب ثم دمج آمن لا يستبدل أبدًا بيانات حقيقية ببيانات فارغة
+  useEffect(()=>{ if(!state||syncedRef.current) return; if(!authOf().email||!authOf().pass) return; syncedRef.current=true; deniedRef.current=false; (async()=>{
+    setCloudState("sync"); const r=await accountSync(false,null);
+    const localScore=dataScore(state); const localT=initialT.current;
+    const adoptCloud=(cd,ct)=>{ skipPush.current=true; setState(Object.assign({team:[],notes:[],archive:[],students:[],subjects:freshSubjects()},cd)); localStorage.setItem("muallim_t",String(ct||Date.now())); setCloudState("ok"); notify("تم استرجاع بياناتك من حسابك ☁️✓"); };
+    const pushLocal=async()=>{ const pr=await accountSync(true,stateRef.current); setCloudState(pr.status==="ok"?"ok":"err"); };
+    if(r.status==="denied"){ // بريد موجود بكلمة مرور خاطئة → ارجع لتسجيل الدخول دون المساس بأي بيانات
+      syncedRef.current=false; setCloudState("err");
+      const ns=Object.assign({},loadSettings(),{authPass:""}); saveSettings(ns); setSettings(ns);
+      setAuthError("كلمة المرور غير صحيحة لهذا البريد. تحقّق وحاول مرة أخرى."); sessionMode.current="auto"; return;
     }
+    if(r.status==="neterr"){ setCloudState("err"); sessionMode.current="auto"; return; } // أوفلاين: نكمل محليًا ونعيد المحاولة تلقائيًا لاحقًا
+    const cloudHas=r.status==="ok"&&r.data&&r.data.teacher; const cloudScore=cloudHas?dataScore(r.data):0; const cloudT=Date.parse(r.updatedAt)||0;
+    if(sessionMode.current==="pull"){ sessionMode.current="auto"; if(cloudHas&&cloudScore>0) return adoptCloud(r.data,cloudT); return pushLocal(); }
     sessionMode.current="auto";
     if(cloudHas&&cloudScore>0){
-      if(localScore<=0) return adoptCloud();              // المحلي فارغ → اجلب السحابة
-      if(cloudScore>localScore && cloudT>=localT) return adoptCloud(); // السحابة أغنى وأحدث
-      if(cloudT>localT && cloudScore>=localScore) return adoptCloud(); // السحابة أحدث وليست أفقر
-      return pushLocal();                                  // المحلي أغنى/أحدث → ارفعه
+      if(localScore<=0) return adoptCloud(r.data,cloudT);
+      if(cloudScore>localScore && cloudT>=localT) return adoptCloud(r.data,cloudT);
+      if(cloudT>localT && cloudScore>=localScore) return adoptCloud(r.data,cloudT);
+      return pushLocal();
     }
-    return pushLocal();                                    // لا شيء في السحابة → ازرع المحلي
-  })(); },[state]);
-  const login=(t,pass)=>{ const code=accountCodeFrom(t&&t.name,pass); const cur=loadSettings(); const ns=Object.assign({},cur,{syncCode:code}); saveSettings(ns); setSettings(ns); _sbClient=null; sessionMode.current="pull"; localStorage.setItem("muallim_t","0"); initialT.current=0; syncedRef.current=false; setState(newStateForLogin(t)); setTab("home"); setRoute(null); };
-  const logout=()=>{ setState(null); setTab("home"); setRoute(null); };
+    return pushLocal();
+  })(); },[state,settings.authEmail,settings.authPass]);
+  const login=(email,pass,name)=>{
+    const em=(email||"").trim().toLowerCase();
+    const cur=loadSettings(); const ns=Object.assign({},cur,{authEmail:em,authPass:pass||"",authName:name||""});
+    saveSettings(ns); setSettings(ns); _sbClient=null; setAuthError(""); deniedRef.current=false;
+    sessionMode.current="pull"; localStorage.setItem("muallim_t","0"); initialT.current=0; syncedRef.current=false;
+    setState(prev=> (prev&&prev.teacher)?Object.assign({},prev,{teacher:{name:name||prev.teacher.name,email:em}}):newStateForLogin({name:name||"المعلّم",email:em}));
+    setTab("home"); setRoute(null);
+  };
+  const logout=()=>{ const ns=Object.assign({},loadSettings(),{authPass:""}); saveSettings(ns); setSettings(ns); deniedRef.current=false; syncedRef.current=false; setState(null); setTab("home"); setRoute(null); };
   const updateSubject=(subj)=>setState(prev=>Object.assign({},prev,{subjects:prev.subjects.map(s=>s.id===subj.id?subj:s)}));
   const updateLesson=(sid,lesson)=>setState(prev=>Object.assign({},prev,{subjects:prev.subjects.map(s=>s.id===sid?Object.assign({},s,{lessons:s.lessons.map(l=>l.id===lesson.id?lesson:l)}):s)}));
   const addSubject=(subj)=>setState(prev=>Object.assign({},prev,{subjects:[...prev.subjects,subj]}));
@@ -1411,7 +1448,7 @@ function App(){
   const applyState=(d)=>{ if(d&&d.teacher){ setState(Object.assign({team:[],notes:[],archive:[]},d)); setTab("home"); setRoute(null); } };
   const shareSummary=()=>{ const all=state.subjects.flatMap(s=>s.lessons); const prep=all.length?Math.round(all.filter(l=>l.prepared).length/all.length*100):0; const txt="📘 حلقة: "+(state.season?state.season.name:"مُعلّمي")+"\nنسبة التحضير: "+prep+"%\nعدد الأطفال: "+state.students.length+"\nعدد المواد: "+state.subjects.length+"\n— عبر تطبيق مُعلّمي"; shareText("ملخّص الحلقة",txt,notify); };
 
-  if(!state) return html`<div className="mq-root"><${Login} onLogin=${login}/><//>`;
+  if(!state||!settings.authEmail||!settings.authPass) return html`<div className="mq-root"><${Login} onLogin=${login} initialEmail=${settings.authEmail||""} initialName=${settings.authName||(state&&state.teacher&&state.teacher.name)||""} authError=${authError}/><//>`;
 
   let screen;
   if(route&&route.type==="subject"){ const subj=state.subjects.find(s=>s.id===route.subjectId); screen=subj?html`<${SubjectScreen} subject=${subj} onBack=${()=>setRoute(null)} openLesson=${(lid)=>setRoute({type:"lesson",subjectId:subj.id,lessonId:lid})} update=${updateSubject} onDelete=${()=>deleteSubject(subj.id)} notify=${notify}/>`:html`<div/>`; }
